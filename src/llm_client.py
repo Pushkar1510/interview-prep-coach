@@ -13,8 +13,16 @@ class LLMClient:
         self.settings = settings
         settings.require_chat_key()
 
-        if settings.llm_provider == "groq":
-            self._client: Any = Groq(api_key=settings.groq_api_key)
+        if settings.llm_provider == "ollama":
+            base = settings.ollama_base_url.rstrip("/")
+            self._client: Any = OpenAI(
+                base_url=f"{base}/v1",
+                api_key="ollama",
+            )
+            self._model = settings.ollama_chat_model
+            self._provider = "ollama"
+        elif settings.llm_provider == "groq":
+            self._client = Groq(api_key=settings.groq_api_key)
             self._model = settings.groq_chat_model
             self._provider = "groq"
         else:

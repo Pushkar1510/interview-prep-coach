@@ -25,6 +25,8 @@ class CoachService:
         company: str,
         history: list[dict[str, str]],
         user_message: str,
+        *,
+        persist: bool = True,
     ) -> str:
         memories = self.memory.search(query=user_message, user_id=user_id, limit=5)
         memory_block = format_memory_block(memories)
@@ -36,6 +38,22 @@ class CoachService:
 
         reply = self.llm.chat(messages)
 
+        if persist:
+            self.persist_chat_turn(
+                user_id=user_id,
+                role=role,
+                user_message=user_message,
+                reply=reply,
+            )
+        return reply
+
+    def persist_chat_turn(
+        self,
+        user_id: str,
+        role: str,
+        user_message: str,
+        reply: str,
+    ) -> None:
         self.memory.add(
             [
                 {"role": "user", "content": user_message},
@@ -44,7 +62,6 @@ class CoachService:
             user_id=user_id,
             metadata={"category": "profile", "role": role},
         )
-        return reply
 
     def generate_question(self, user_id: str, role: str, company: str) -> str:
         memories = self.memory.search(

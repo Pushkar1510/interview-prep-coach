@@ -10,33 +10,37 @@ from src.config import Settings
 
 class MemoryService:
     def __init__(self, settings: Settings) -> None:
-        settings.require_openai_for_mem0()
+        settings.require_mem0_ready()
         self.settings = settings
 
         data_path = Path(settings.mem0_data_path)
         data_path.mkdir(parents=True, exist_ok=True)
 
+        # Local Ollama for Mem0 LLM + embeddings (no paid API).
+        # New collection name avoids clashing with older OpenAI 1536-dim data.
         config = {
             "llm": {
-                "provider": "openai",
+                "provider": "ollama",
                 "config": {
-                    "model": "gpt-4o-mini",
+                    "model": settings.ollama_chat_model,
                     "temperature": 0.1,
-                    "api_key": settings.openai_api_key,
+                    "ollama_base_url": settings.ollama_base_url,
                 },
             },
             "embedder": {
-                "provider": "openai",
+                "provider": "ollama",
                 "config": {
-                    "model": "text-embedding-3-small",
-                    "api_key": settings.openai_api_key,
+                    "model": settings.ollama_embed_model,
+                    "ollama_base_url": settings.ollama_base_url,
+                    "embedding_dims": 768,
                 },
             },
             "vector_store": {
                 "provider": "qdrant",
                 "config": {
-                    "collection_name": "interview_coach",
+                    "collection_name": "interview_coach_ollama",
                     "path": str(data_path / "qdrant"),
+                    "embedding_model_dims": 768,
                 },
             },
             "history_db_path": str(data_path / "history.db"),
@@ -52,7 +56,11 @@ class MemoryService:
         return self._memory.add(messages, user_id=user_id, metadata=metadata or {})
 
     def search(self, query: str, user_id: str, limit: int = 5) -> list[dict[str, Any]]:
-        result = self._memory.search(query=query, user_id=user_id, limit=limit)
+        result = self._memory.search(
+            query=query,
+            filters={"user_id": user_id},
+            top_k=limit,
+        )
         if isinstance(result, dict) and "results" in result:
             return list(result["results"])
         if isinstance(result, list):
@@ -60,7 +68,7 @@ class MemoryService:
         return []
 
     def get_all(self, user_id: str) -> list[dict[str, Any]]:
-        result = self._memory.get_all(user_id=user_id)
+        result = self._memory.get_all(filters={"user_id": user_id})
         if isinstance(result, dict) and "results" in result:
             return list(result["results"])
         if isinstance(result, list):

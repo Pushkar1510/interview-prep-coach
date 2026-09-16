@@ -12,38 +12,31 @@ st.set_page_config(page_title="Interview Prep Coach", page_icon="🎯", layout="
 
 
 @st.cache_resource
-def get_services(provider: str):
-    settings = load_settings()
-    # Allow UI override of provider for the session
-    object.__setattr__(
-        settings,
-        "llm_provider",
-        provider,
-    ) if False else None
-
-    # Rebuild settings-like behavior without mutating frozen dataclass:
+def get_services(provider: str, chat_model: str):
     from dataclasses import replace
 
-    settings = replace(settings, llm_provider=provider)
-    settings.require_openai_for_mem0()
+    settings = replace(load_settings(), llm_provider=provider)
+    settings.require_mem0_ready()
     settings.require_chat_key()
-
     llm = LLMClient(settings)
     memory = MemoryService(settings)
-    coach = CoachService(llm, memory)
-    return coach, memory, settings
+    return CoachService(llm, memory), memory, settings
 
 
 def main() -> None:
     st.title("Interview Prep Coach")
-    st.caption("Self-learning interview practice with Mem0 long-term memory")
+    st.caption("Self-learning interview practice")
 
     with st.sidebar:
         st.header("Session")
         user_id = st.text_input("User ID", value="demo-user")
         role = st.text_input("Target role", value="Backend Engineer")
         company = st.text_input("Company (optional)", value="")
-        provider = st.selectbox("Chat LLM provider", options=["openai", "groq"], index=0)
+        provider = st.selectbox(
+            "Chat LLM provider",
+            options=["ollama", "groq", "openai"],
+            index=0,
+        )
 
         if st.button("Clear chat history"):
             st.session_state.chat_history = []
@@ -53,8 +46,10 @@ def main() -> None:
 
         st.markdown("---")
         st.markdown(
-            "Mem0 needs **OPENAI_API_KEY**. "
-            "Groq chat needs **GROQ_API_KEY** when selected."
+            "Default is free **Ollama** (local, CPU can be slow). "
+            "Mem0 also uses Ollama. Ensure `ollama serve` is running and "
+            "models `llama3.2:1b` + `nomic-embed-text` are pulled. "
+            "Groq/OpenAI only needed if you select them for chat."
         )
 
     if "chat_history" not in st.session_state:
@@ -65,7 +60,17 @@ def main() -> None:
         st.session_state.mock_feedback = None
 
     try:
-        coach, memory, _settings = get_services(provider)
+        base_settings = load_settings()
+        chat_model = (
+            base_settings.ollama_chat_model
+            if provider == "ollama"
+            else (
+                base_settings.groq_chat_model
+                if provider == "groq"
+                else base_settings.openai_chat_model
+            )
+        )
+        coach, memory, _settings = get_services(provider, chat_model)
     except Exception as exc:  # show setup errors cleanly
         st.error(str(exc))
         st.stop()
@@ -86,20 +91,30 @@ def main() -> None:
                 st.markdown(prompt)
             try:
                 with st.chat_message("assistant"):
-                    with st.spinner("Thinking with memory…"):
-                        history_for_model = [
-                            m
-                            for m in st.session_state.chat_history[:-1]
-                            if m["role"] in {"user", "assistant"}
-                        ]
+                    history_for_model = [
+                        m
+                        for m in st.session_state.chat_history[:-1]
+                        if m["role"] in {"user", "assistant"}
+                    ]
+                    with st.spinner(
+                        "Generating reply (CPU Ollama can take 15–60s)…"
+                    ):
                         reply = coach.chat(
                             user_id=user_id,
                             role=role,
                             company=company,
                             history=history_for_model,
                             user_message=prompt,
+                            persist=False,
                         )
                         st.markdown(reply)
+                    with st.spinner("Saving to long-term memory…"):
+                        coach.persist_chat_turn(
+                            user_id=user_id,
+                            role=role,
+                            user_message=prompt,
+                            reply=reply,
+                        )
                 st.session_state.chat_history.append(
                     {"role": "assistant", "content": reply}
                 )
